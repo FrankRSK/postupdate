@@ -1,0 +1,114 @@
+<?php
+/*
+Plugin Name: PostUpdate
+Description: Aktualisiert das Veröffentlichungsdatum eines zufälligen Beitrags Y mal am Tag auf das aktuelle Datum, wenn der Beitrag länger als x Tage online ist.
+Version: 1.0
+*/
+
+// Cron-Job hinzufügen
+function add_postupdate_cron_event() {
+    $y_times = get_option( 'postupdate_y_times' ); // Anzahl der Aktualisierungen pro Tag
+    $update_interval = 24 / $y_times; // Aktualisierungsintervall in Stunden
+    $current_hour = date( 'G' ); // aktuelle Stunde
+    $next_update_hour = floor( $current_hour / $update_interval ) * $update_interval + $update_interval; // Stunde des nächsten Updates
+    $next_update_time = strtotime( 'today +' . $next_update_hour . ' hours' ); // Zeitstempel des nächsten Updates
+
+    if ( ! wp_next_scheduled( 'random_post_date_update_event' ) ) {
+        wp_schedule_single_event( $next_update_time, 'random_post_date_update_event' );
+    }
+}
+add_action( 'wp', 'add_postupdate_cron_event' );
+
+
+// Cron-Job ausführen
+function do_random_post_update() {
+    // Einstellungen aus dem Adminmenü abrufen
+    $x_days = get_option( 'postupdate_x_days' ); // x Tage
+    $y_times = get_option( 'postupdate_y_times' ); // Y mal am Tag
+    $update_interval = 24 / $y_times; // Aktualisierungsintervall in Stunden
+
+    // Zeit bis zum nächsten Update berechnen
+    $next_update_time = strtotime( 'today' ) + ( floor( ( time() - strtotime( 'today' ) ) / 3600 / $update_interval ) + 1 ) * 3600 * $update_interval;
+
+    // Zufälligen Beitrag auswählen, der länger als x Tage online ist
+    $args = array(
+        'post_type' => 'post',
+        'post_status' => 'publish',
+        'orderby' => 'rand',
+        'posts_per_page' => 1,
+        'date_query' => array(
+            array(
+                'before' => '-' . $x_days . ' days',
+                'column' => 'post_date',
+            ),
+        ),
+    );
+    $random_post = new WP_Query( $args );
+
+    if ( $random_post->have_posts() ) {
+        while ( $random_post->have_posts() ) {
+            $random_post->the_post();
+
+            // Das Veröffentlichungsdatum des Beitrags aktualisieren
+            $post_id = get_the_ID();
+            $post_data = array(
+                'ID' => $post_id,
+                'post_date' => current_time('mysql'),
+                'post_date_gmt' => current_time('mysql', 1),
+            );
+            wp_update_post( $post_data );
+        }
+    }
+
+    // Reset Postdata
+    wp_reset_postdata();
+
+    // Nächsten Cron-Job planen
+    wp_schedule_single_event( $next_update_time, 'random_post_date_update_event' );
+}
+add_action( 'random_post_date_update_event', 'do_random_post_update' );
+
+// Einstellungen ins Adminmenü hinzufügen
+function postupdate_settings_init() {
+    add_settings_section( 'postupdate_settings_section', 'PostUpdate Einstellungen', '', 'postupdate_settings' );
+    add_settings_field( 'postupdate_x_days', 'Anzahl der Tage', 'postupdate_x_days_callback', 'postupdate_settings', 'postupdate_settings_section' );
+    add_settings_field( 'postupdate_y_times', 'Anzahl der Aktualisierungen pro Tag', 'postupdate_y_times_callback', 'postupdate_settings', 'postupdate_settings_section' );
+    register_setting( 'postupdate_settings', 'postupdate_x_days' );
+    register_setting( 'postupdate_settings', 'postupdate_y_times' );
+}
+add_action( 'admin_init', 'postupdate_settings_init' );
+
+function postupdate_x_days_callback() {
+$x_days = get_option( 'postupdate_x_days' );
+?>
+<input type="number" name="postupdate_x_days" id="postupdate_x_days" min="1" value="<?php echo esc_attr( $x_days ); ?>">
+<?php
+}
+
+function postupdate_y_times_callback() {
+$y_times = get_option( 'postupdate_y_times' );
+?>
+<input type="number" name="postupdate_y_times" id="postupdate_y_times" min="1" max="24" value="<?php echo esc_attr( $y_times ); ?>">
+<?php
+}
+
+function postupdate_options_page() {
+?>
+<div class="wrap">
+<h1>PostUpdate Einstellungen</h1>
+<form action="options.php" method="post">
+<?php
+         settings_fields( 'postupdate_settings' );
+         do_settings_sections( 'postupdate_settings' );
+         submit_button( 'Speichern' );
+         ?>
+</form>
+</div>
+<?php
+}
+
+// Menüpunkt ins Admin-Menü hinzufügen
+function postupdate_add_options_page() {
+add_options_page( 'PostUpdate Einstellungen', 'PostUpdate', 'manage_options', 'postupdate_options', 'postupdate_options_page' );
+}
+add_action( 'admin_menu', 'postupdate_add_options_page' );
